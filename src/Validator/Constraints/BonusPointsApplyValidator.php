@@ -34,7 +34,6 @@ final class BonusPointsApplyValidator extends ConstraintValidator
         if (null === $bonusPoints) {
             return;
         }
-
         if ($this->canFitBonusPointsToOrder($bonusPoints)) {
             $this->context->buildViolation($constraint->exceedOrderItemsTotalMessage)->addViolation();
 
@@ -43,11 +42,11 @@ final class BonusPointsApplyValidator extends ConstraintValidator
 
         $bonusPointsStrategies = $this->bonusPointsStrategyRepository->findActiveByCalculatorType(PerOrderPriceCalculator::TYPE);
 
-        if (0 === \count($bonusPointsStrategies)) {
+        if (\count($bonusPointsStrategies) === 0) {
             return;
         }
 
-        if (0 !== $bonusPoints % 100) {
+        if ($bonusPoints % 100 !== 0) {
             $this->context->getViolations()->remove(0);
             $this->context->buildViolation($constraint->invalidBonusPointsValueMessage)->addViolation();
         }
@@ -56,7 +55,10 @@ final class BonusPointsApplyValidator extends ConstraintValidator
     private function canFitBonusPointsToOrder(int $bonusPoints): bool
     {
         $order = $this->cartContext->getCart();
+        if ($bonusPoints !== 0 && $this->cartContext->getCart()->getPromotionCoupon()) {
+            return true;
+        }
 
-        return $order->getItemsTotal() < $bonusPoints;
+        return ($order->getItemsTotal() * 2) < $bonusPoints;
     }
 }
