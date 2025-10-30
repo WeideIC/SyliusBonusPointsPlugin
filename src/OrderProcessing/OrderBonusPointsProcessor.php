@@ -42,14 +42,16 @@ final class OrderBonusPointsProcessor implements OrderProcessorInterface
             'isUsed' => true,
         ]);
 
+        if (count($order->getItems()) === 0 || $order->getPromotionCoupon()) {
+            $order->setBonusPoints(0);
+            $order->removeAdjustments(AdjustmentInterface::ORDER_BONUS_POINTS_ADJUSTMENT);
+        }
         if (0 === count($bonusPoints)) {
             return;
         }
-
         $order->removeAdjustments(AdjustmentInterface::ORDER_BONUS_POINTS_ADJUSTMENT);
 
         $totalUsedPoints = 0;
-
         foreach ($bonusPoints as $bonusPoint) {
             $parentBonusPoint = $bonusPoint->getOriginalBonusPoints();
 
@@ -62,26 +64,24 @@ final class OrderBonusPointsProcessor implements OrderProcessorInterface
 
                 continue;
             }
-
-            $totalUsedPoints += $bonusPoint->getPoints();
+            $totalUsedPoints += (int) round($bonusPoint->getPoints());
         }
-
+        // var_dump($totalUsedPoints);exit;
         if (0 >= $totalUsedPoints) {
             return;
         }
 
-        if ($order->getItemsTotal() < $totalUsedPoints) {
-            $pennies = $order->getItemsTotal() % 100;
+        if (($order->getItemsTotal() * 2) < $totalUsedPoints) {
+            $pennies        = $order->getItemsTotal() % 100;
             $decreasePoints = ($totalUsedPoints - ($order->getItemsTotal() - $pennies));
             $totalUsedPoints -= $decreasePoints;
-
             $this->decreaseBonusPoints($bonusPoints, $decreasePoints);
         }
 
         $adjustment = $this->adjustmentFactory->createWithData(
             AdjustmentInterface::ORDER_BONUS_POINTS_ADJUSTMENT,
             AdjustmentInterface::ORDER_BONUS_POINTS_ADJUSTMENT,
-            (-1 * $totalUsedPoints),
+            (-1 * (int) round($totalUsedPoints / 2)),
         );
 
         $adjustment->setOriginCode(AdjustmentInterface::ORDER_BONUS_POINTS_ADJUSTMENT);

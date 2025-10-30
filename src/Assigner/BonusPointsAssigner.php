@@ -18,6 +18,7 @@ use BitBag\SyliusBonusPointsPlugin\Entity\BonusPointsInterface;
 use BitBag\SyliusBonusPointsPlugin\Entity\BonusPointsStrategyInterface;
 use BitBag\SyliusBonusPointsPlugin\Entity\CustomerBonusPointsInterface;
 use BitBag\SyliusBonusPointsPlugin\Repository\BonusPointsStrategyRepositoryInterface;
+use Sylius\Component\Core\OrderPaymentStates;
 use function count;
 use DateTime;
 use Doctrine\ORM\EntityManagerInterface;
@@ -62,72 +63,20 @@ final class BonusPointsAssigner implements BonusPointsAssignerInterface
         if (0 === $bonusPointsTotal) {
             return;
         }
+        if ($order->getPaymentState() === OrderPaymentStates::STATE_PAID && !$this->bonusPointsEntityManager->getRepository(BonusPoints::class)->findOneBy(['order' => $order, 'isUsed' => false])) {
+            /** @var BonusPointsInterface $bonusPoints */
+            $bonusPoints = $this->bonusPointsFactory->createNew();
+            $bonusPoints->setOrder($order);
+            $bonusPoints->setPoints($bonusPointsTotal);
+            $bonusPoints->setIsUsed(false);
+            $order->setEarnedBonusPoints($bonusPointsTotal);
+            //TODO :: Change to more flexible date ?
+            $bonusPoints->setExpiresAt((new DateTime())->modify('+1 year'));
 
-        /** @var BonusPointsInterface $bonusPoints */
-        $bonusPoints = $this->bonusPointsFactory->createNew();
-        $bonusPoints->setOrder($order);
-        $bonusPoints->setPoints($bonusPointsTotal);
-        $bonusPoints->setIsUsed(false);
+            $this->getCustomerBonusPoints($order->getCustomer())->addBonusPoints($bonusPoints);
 
-        //TODO :: Change to more flexible date ?
-        $bonusPoints->setExpiresAt((new DateTime())->modify('+1 year'));
-
-        $this->getCustomerBonusPoints($order->getCustomer())->addBonusPoints($bonusPoints);
-
-        $this->bonusPointsEntityManager->persist($bonusPoints);
-        $this->bonusPointsEntityManager->flush();
-    }
-
-    private function getCustomerBonusPoints(?CustomerInterface $customer): CustomerBonusPointsInterface
-    {
-        /** @var CustomerBonusPointsInterface $customerBonusPoints */
-        $customerBonusPoints = $this->customerBonusPointsRepository->findOneBy([
-                'customer' => $customer,
-            ]) ?? $this->customerBonusPointsFactory->createNew();
-
-        if (null === $customerBonusPoints->getId()) {
-            $customerBonusPoints->setCustomer($customer);
-
-            $this->customerBonusPointsRepository->add($customerBonusPoints);
+            $this->bonusPointsEntityManager->persist($bonusPoints);
         }
-
-        return $customerBonusPoints;
-    }
-
-    private function getProportionalIntegerToDeduct(BonusPointsStrategyInterface $bonusPointsStrategy, array $orderItems, int $bonusPointsAmount): array
-    {
-        /** @var OrderItemInterface[] $itemsEligible */
-        $itemsEligible = [];
-
-        foreach ($orderItems as $orderItem) {
-            $product = $orderItem->getProduct();
-
-            if ($this->bonusPointsStrategyEligibilityChecker->isEligible($product, $bonusPointsStrategy)) {
-                $itemsEligible[] = $orderItem;
-            }
-        }
-
-        $totals = [];
-
-        foreach ($itemsEligible as $item) {
-            $totals[] = $item->getTotal();
-        }
-
-        if (0 === count($totals)) {
-            return [];
-        }
-
-        $splitAmount = $this->proportionalIntegerDistributor->distribute($totals, $bonusPointsAmount);
-
-        $splitAmountOrderItems = [];
-
-        $i = 0;
-
-        foreach ($itemsEligible as $eligible) {
-            $splitAmountOrderItems[$eligible->getId()] = $splitAmount[$i++];
-        }
-
-        return $splitAmountOrderItems;
     }
 
     public function calculateBonusPointsPerOrder(BonusPointsStrategyInterface $bonusPointsStrategy, OrderInterface $order, int $bonusPointsTotal): int
@@ -153,7 +102,7 @@ final class BonusPointsAssigner implements BonusPointsAssignerInterface
                 $bonusPointsTotal += $this->delegatingBonusPointsStrategyCalculator->calculate(
                     $orderItem,
                     $bonusPointsStrategy,
-                    $bonusPointsStrategy->isDeductBonusPoints() && 0 < count($splitAmountOrderItems) ?
+                    $bonusPointsStrategy->isDeductBonusPoints() && count($splitAmountOrderItems) > 0 ?
                         $splitAmountOrderItems[$orderItem->getId()] : 0,
                 );
             }
@@ -187,5 +136,47 @@ final class BonusPointsAssigner implements BonusPointsAssignerInterface
         }
 
         return $bonusPointsTotal;
+    }
+
+    private function getCustomerBonusPoints(?CustomerInterface $customer): CustomerBonusPointsInterface
+    {
+        $customerBonusPoints = $this->customerBonusPointsRepository->findOneBy([
+            'customer' => $customer,
+        ]) ?? $this->customerBonusPointsFactory->createNew();
+
+        if (null === $customerBonusPoints->getId()) {
+            $customerBonusPoints->setCustomer($customer);
+
+            $this->customerBonusPointsRepository->add($customerBonusPoints);
+        }
+
+        return $customerBonusPoints;
+    }
+
+    private function getProportionalIntegerToDeduct(BonusPointsStrategyInterface $bonusPointsStrategy, array $orderItems, int $bonusPointsAmount): array
+    {
+        /** @var OrderItemInterface[] $itemsEligible */
+        $itemsEligible = array_filter($orderItems, fn ($orderItem) => $this->bonusPointsStrategyEligibilityChecker->isEligible($orderItem->getProduct(), $bonusPointsStrategy));
+
+        $totals = array_map(
+            fn ($item) => $item->getTotal(),
+            $itemsEligible,
+        );
+
+        if (count($totals) === 0) {
+            return [];
+        }
+
+        $splitAmount = $this->proportionalIntegerDistributor->distribute($totals, $bonusPointsAmount);
+
+        $splitAmountOrderItems = [];
+
+        $i = 0;
+
+        foreach ($itemsEligible as $eligible) {
+            $splitAmountOrderItems[$eligible->getId()] = $splitAmount[$i++];
+        }
+
+        return $splitAmountOrderItems;
     }
 }
