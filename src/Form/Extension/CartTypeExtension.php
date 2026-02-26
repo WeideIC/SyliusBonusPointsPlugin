@@ -48,7 +48,6 @@ final class CartTypeExtension extends AbstractTypeExtension
         $builder
             ->add('bonusPoints', IntegerType::class, [
                 'required' => false,
-                'currency' => false,
                 'constraints' => [
                     new Range([
                         'min' => 0,
