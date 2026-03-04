@@ -57,7 +57,6 @@ final class CartTypeExtension extends AbstractTypeExtension
                         'groups' => ['sylius'],
                     ]),
                 ],
-                'data' => null,
             ])
         ;
     }
